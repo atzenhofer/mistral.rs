@@ -180,7 +180,25 @@ pub fn calculate_cache_config(
         }
     }
 
-    let num_gpu_blocks = mb_to_blocks!(mem_gpu * SIZE_IN_MB, dtype_size, block_size, config);
+    let mut num_gpu_blocks = mb_to_blocks!(mem_gpu * SIZE_IN_MB, dtype_size, block_size, config);
+    if num_gpu_blocks == 0 {
+        // Utilization/% budgets can leave ~0 MB for KV after large weights (e.g. F32). Demand-driven
+        // cap matches explicit `--pa-context-len` and usually yields a non-zero block count.
+        let fallback_tokens = config.max_seq_len().min(2048).max(block_size);
+        let ctxt_budget_mb =
+            ctxt_to_blocks!(fallback_tokens, dtype_size, block_size, config) / SIZE_IN_MB;
+        if ctxt_budget_mb > 0 {
+            if !silent {
+                info!(
+                    "PagedAttention: KV budget yielded 0 GPU blocks; retrying with ~{} token KV reservation (~{} MB).",
+                    fallback_tokens, ctxt_budget_mb
+                );
+            }
+            mem_gpu = ctxt_budget_mb;
+            num_gpu_blocks =
+                mb_to_blocks!(mem_gpu * SIZE_IN_MB, dtype_size, block_size, config);
+        }
+    }
     if num_gpu_blocks == 0 {
         anyhow::bail!("Num GPU blocks is 0. This means there is not enough memory. Either reduce the memory amount/utilization/context size or disable PagedAttention.");
     }
