@@ -69,12 +69,8 @@ impl TryIntoDType for DType {
 fn get_dtypes() -> Vec<DType> {
     use std::process::Command;
 
-    // Native BF16 tensor paths: Ampere+
+    // BF16 fast paths match Ampere+ (CC ≥ 8.0); Turing stays F16 for auto until Candle is stable.
     const MIN_BF16_CC: usize = 800;
-    // Turing (sm_75–sm_79): BF16 is still useful for Candle auto dtype — Hub weights are
-    // often BF16; F16-only compute was prone to NaN logits on some models (e.g. Qwen2.5).
-    const MIN_BF16_TURING_CC: usize = 750;
-    // >= is supported
     const MIN_F16_CC: usize = 530;
 
     let raw_out = Command::new("nvidia-smi")
@@ -100,14 +96,8 @@ fn get_dtypes() -> Vec<DType> {
     let mut dtypes = Vec::new();
     if min_cc >= MIN_BF16_CC {
         dtypes.push(DType::BF16);
-    } else if min_cc >= MIN_BF16_TURING_CC && min_cc < MIN_BF16_CC {
-        dtypes.push(DType::BF16);
-        info!(
-            "CUDA auto dtype: enabling BF16 on Turing (CC {:.1}); prefer over F16 for typical BF16 checkpoints",
-            min_cc as f32 / 100.0
-        );
     } else {
-        info!("Skipping BF16 because CC < 7.5");
+        info!("Skipping BF16 because CC < 8.0");
     }
     if min_cc >= MIN_F16_CC {
         dtypes.push(DType::F16);
